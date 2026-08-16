@@ -8,7 +8,8 @@ Official source artifact repository for the IEEE CARS 2026 paper:
 > **"Machine-Checked Linear Temporal Logic for the UEFI Capsule Update Process: A Foundational Proof of Authenticity, Anti-Rollback, and Responsiveness"**  
 > *Vincent Zimmer* (IEEE CARS 2026)
 
-Repository URL: [https://github.com/vincentjzimmer/formal/capsule-ltl](https://github.com/vincentjzimmer/formal/capsule-ltl)
+Repository: https://github.com/vincentjzimmer/formal (`capsule-ltl/` directory)
+Direct Link: https://github.com/vincentjzimmer/formal/tree/main/capsule-ltl
 
 ---
 
