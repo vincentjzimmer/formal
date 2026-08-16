@@ -109,10 +109,10 @@ rustc --crate-type lib capsule.rs
 If you use this work, please cite:
 
 ```bibtex
-@inproceedings{zimmer2026capsuleltl,
+@misc{zimmer2026capsuleltl,
   author    = {Vincent Zimmer},
   title     = {Machine-Checked Linear Temporal Logic for the UEFI Capsule Update Process: A Foundational Proof of Authenticity, Anti-Rollback, and Responsiveness},
-  booktitle = {IEEE Cyber Awareness and Research Symposium (CARS)},
+  note      = {Pre-print submitted to IEEE Cyber Awareness and Research Symposium (CARS)},
   year      = {2026}
 }
 ```
