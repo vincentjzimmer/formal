@@ -11,7 +11,7 @@ Official source artifact repository for the IEEE CARS 2026 paper:
 Repository: https://github.com/vincentjzimmer/formal (`capsule-ltl/` directory)
 Direct Link: https://github.com/vincentjzimmer/formal/tree/main/capsule-ltl
 
----
+	---
 
 ## 📌 Overview
 
