@@ -1,0 +1,5 @@
+{"log":
+ [{"message":
+   ".> LEAN_PATH=././.lake/build/lib LD_LIBRARY_PATH= /root/.elan/toolchains/leanprover--lean4---v4.16.0/bin/lean ././././AuthMonotone.lean -R ./././. -o ././.lake/build/lib/AuthMonotone.olean -i ././.lake/build/lib/AuthMonotone.ilean -c ././.lake/build/ir/AuthMonotone.c --json",
+   "level": "trace"}],
+ "depHash": "534736262198309567"}

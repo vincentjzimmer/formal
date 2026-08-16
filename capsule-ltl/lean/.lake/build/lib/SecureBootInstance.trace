@@ -1,0 +1,5 @@
+{"log":
+ [{"message":
+   ".> LEAN_PATH=././.lake/build/lib LD_LIBRARY_PATH= /root/.elan/toolchains/leanprover--lean4---v4.16.0/bin/lean ././././SecureBootInstance.lean -R ./././. -o ././.lake/build/lib/SecureBootInstance.olean -i ././.lake/build/lib/SecureBootInstance.ilean -c ././.lake/build/ir/SecureBootInstance.c --json",
+   "level": "trace"}],
+ "depHash": "17006382415510128332"}
