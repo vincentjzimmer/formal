@@ -49,6 +49,6 @@ For the repository as a whole:
     year      = {2026}
   }
 ──────
-  ## 📄 License
+  ## License
 
   Artifacts in this repository are available under the MIT License /LICENSE unless specified otherwise within individual subdirectories.
