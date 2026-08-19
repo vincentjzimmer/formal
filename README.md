@@ -4,7 +4,7 @@ A collection of machine-checked proofs, temporal logic specifications, and model
 
 ---
 
-## 📚 Projects & Artifacts
+## Projects & Artifacts
 
 | Project | Description | Methods / Tools | Associated Paper / Venue |
 | :--- | :--- | :--- | :--- |
@@ -13,7 +13,7 @@ A collection of machine-checked proofs, temporal logic specifications, and model
 
   ---
 
-## 🛠️ General Prerequisites
+## General Prerequisites
 
 Individual subdirectories contain project-specific instructions, scripts, and pinned toolchains. Common tools used across this repository include:
 
@@ -23,7 +23,7 @@ Individual subdirectories contain project-specific instructions, scripts, and pi
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 Clone the repository:
 
@@ -36,7 +36,7 @@ Navigate to a specific project directory to inspect proofs and run verifications
   cd capsule-ltl
   # Follow the local README.md for build and verification instructions
 ──────
-## 📜 Citations
+## Citations
 
 If you reference or build upon any of these artifacts, please cite the corresponding paper found in each subfolder's README.md.
 
