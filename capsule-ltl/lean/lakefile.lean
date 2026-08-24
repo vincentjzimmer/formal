@@ -1,11 +1,9 @@
 import Lake
 open Lake DSL
 
-package «capsule-ltl» where
-  -- Package configuration options
+package papers4
 
-@[default_target]
-lean_lib «UefiCapsuleLTL» where
-  roots := #[`ltl_capsule, `refine_capsule, `AuthMonotone,
-             `AuthVarInstance, `SecureBootInstance,
-             `CapsuleInstance, `AbstractAdvance, `Composition]
+lean_lib Papers4 where
+  roots := #[`ltl_capsule, `AuthMonotone, `refine_capsule,
+             `AbstractAdvance, `CapsuleInstance, `SecureBootInstance,
+             `AuthVarInstance, `Composition]

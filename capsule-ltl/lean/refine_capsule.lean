@@ -36,10 +36,12 @@ def advance (s : St) : St :=
   match s.phase with
   | Idle           => s                                    -- stutterIdle
   | CapsuleStaged  => { s with phase := PostReset, resetOccurred := true }
-  | PostReset      => { s with phase := Authenticating }
+  | PostReset      => { s with phase := Authenticating,
+                               capsuleSigValid := certOK s.imageDigest }
   | Authenticating =>
-      if s.capsuleSigValid = true ∧ s.fwVersion < s.capsuleVersion then
-        { s with phase := Applied, fwVersion := s.capsuleVersion }
+      if s.capsuleSigValid = true ∧ s.lsv ≤ s.capsuleVersion then
+        { s with phase := Applied, fwVersion := s.capsuleVersion,
+                 lsv := s.capsuleVersion }
       else
         { s with phase := Rejected, capsulePresent := false }
   | Applied        => { s with phase := Idle, capsulePresent := false, resetOccurred := false }
@@ -55,17 +57,14 @@ theorem step_advance (s : St) : Step s (advance s) := by
   | CapsuleStaged  => exact Step.reset s h
   | PostReset      => exact Step.beginAuth s h
   | Authenticating =>
-      by_cases hc : s.capsuleSigValid = true ∧ s.fwVersion < s.capsuleVersion
+      by_cases hc : s.capsuleSigValid = true ∧ s.lsv ≤ s.capsuleVersion
       · rw [if_pos hc]; exact Step.apply s h hc.1 hc.2
       · rw [if_neg hc]
         apply Step.reject s h
-        -- ¬(sig=true ∧ fw<cap)  ⇒  sig=false ∨ cap≤fw, using only core tactics
         by_cases hs : s.capsuleSigValid = true
-        · -- signature valid, so the version guard must have failed
-          have hnlt : ¬ (s.fwVersion < s.capsuleVersion) := fun hlt => hc ⟨hs, hlt⟩
-          exact Or.inr (Nat.le_of_not_lt hnlt)
-        · -- signature not = true, hence = false (Bool)
-          exact Or.inl (by cases hb : s.capsuleSigValid <;> simp_all)
+        · have hnlt : ¬ (s.lsv ≤ s.capsuleVersion) := fun hle => hc ⟨hs, hle⟩
+          exact Or.inr (Nat.lt_of_not_le hnlt)
+        · exact Or.inl (by cases hb : s.capsuleSigValid <;> simp_all)
   | Applied        => exact Step.finishApplied s h
   | Rejected       => exact Step.finishRejected s h
 
@@ -103,16 +102,24 @@ theorem safety_authentic_det {s0 : St} (h : Init s0) :
   intro j
   exact safety_authentic (detRun s0) (detRun_isRun h) j (Nat.zero_le j)
 
-/-- A staged, authentic, strictly-newer state at the state level. -/
+/-- A staged, authentic, at-or-above-floor state at the state level.
+    `certOK` is evaluated at staging; `lsv ≤ capsuleVersion` is the EDK II
+    anti-rollback guard. -/
 def goodState (s : St) : Prop :=
-  s.phase = CapsuleStaged ∧ s.capsuleSigValid = true ∧ s.fwVersion < s.capsuleVersion
+  s.phase = CapsuleStaged ∧ certOK s.imageDigest = true ∧ s.lsv ≤ s.capsuleVersion
 
 /-- **Bounded witness, directly on `advance`.** Three deterministic steps from a
-    good staged state reach `Applied` — the executable image of the forced
-    3-step liveness argument, on the extracted function itself. -/
+    good staged state reach `Applied`. -/
 theorem advance_three {s : St} (hg : goodState s) :
     (advance (advance (advance s))).phase = Applied := by
-  obtain ⟨hp, hsig, hver⟩ := hg
-  simp only [advance, hp, hsig, hver, and_self, if_true]
+  obtain ⟨hp, hcert, hfloor⟩ := hg
+  -- Use step_advance + forced-path lemmas to thread fields through each step
+  have h1 := step_advance s
+  have h2 := step_advance (advance s)
+  have h3 := step_advance (advance (advance s))
+  obtain ⟨hpr, _, hcv, hlsv, hdig⟩ := reset_forced hp h1
+  obtain ⟨hau, _, hcv2, hlsv2, hsig⟩ := auth_forced hpr h2
+  exact good_apply_forced hau (by rw [hsig, hdig]; exact hcert)
+            (by rw [hlsv2, hlsv, hcv2, hcv]; exact hfloor) h3
 
 end UefiCapsuleLTL

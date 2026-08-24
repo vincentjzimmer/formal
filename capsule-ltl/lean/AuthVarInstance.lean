@@ -22,6 +22,7 @@
 -/
 
 import AuthMonotone
+import ltl_capsule
 
 namespace UefiAuthVar
 

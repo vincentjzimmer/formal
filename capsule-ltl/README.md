@@ -1,6 +1,6 @@
 # Machine-Checked Linear Temporal Logic for the UEFI Capsule Update Process
 
-[![Lean 4](https://img.shields.io/badge/Lean-4.16.0-blue.svg)](https://leanprover.github.io/)
+[![Lean 4](https://img.shields.io/badge/Lean-4.33.1-blue.svg)](https://leanprover.github.io/)
 [![TLA+](https://img.shields.io/badge/TLA%2B-2.19-purple.svg)](https://lamport.azurewebsites.net/tla/tla.html)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -10,6 +10,7 @@ Official source artifact repository for the IEEE CARS 2026 paper:
 
 * **Repository:** https://github.com/vincentjzimmer/formal (`capsule-ltl/` directory)
 * **Direct Link:** https://github.com/vincentjzimmer/formal/tree/main/capsule-ltl
+* **Reproduce results:** see [`REPRODUCE.md`](REPRODUCE.md)
 
 ---
 
@@ -18,10 +19,11 @@ Official source artifact repository for the IEEE CARS 2026 paper:
 Platform firmware update is among the highest-value targets in modern system security. UEFI standardizes this path via `UpdateCapsule` and the Firmware Management Protocol (FMP), but security arguments have historically existed only in prose and reference C code (`FmpDevicePkg`).
 
 This repository provides the complete, open-source verification artifacts:
-1. **Machine-Checked Lean 4 Proofs**: A shallow Linear Temporal Logic (LTL) embedding verifying 5 core security properties:
+1. **Machine-Checked Lean 4 Proofs**: A shallow Linear Temporal Logic (LTL) embedding verifying 6 core security properties:
    - **Authenticity ($S$)**: Only signed capsules are applied.
    - **Anti-Rollback ($R1, R2$)**: Installed version is monotone non-decreasing (locally & globally).
-   - **Apply Guard ($G$)**: Pre-application state requires a strictly newer version.
+   - **LSV Monotonicity ($R3$)**: The lowest-supported-version floor (`lsv`) never decreases.
+   - **Apply Guard ($G$)**: Pre-application state requires signature validity and `lsv ≤ capsuleVersion`.
    - **Reset Ordering ($O$)**: Application requires a mandatory platform reset.
    - **Responsiveness ($L$)**: Good path forcing guarantees eventual application.
 2. **TLA+ & TLAPS Specifications**: Explicit-state cross-validation (TLC) probing model boundaries (power failures, torn metadata, multi-device dependencies) and unbounded safety re-proofs (TLAPS).
@@ -38,10 +40,12 @@ This repository provides the complete, open-source verification artifacts:
 ├── lean/                              # Lean 4 theorem proving suite
 │   ├── lakefile.lean                  # Lake package manager setup
 │   ├── lean-toolchain                 # Lean toolchain pin (v4.16.0)
-│   ├── ltl_capsule.lean               # Core LTL semantics & 5 security theorems
-│   ├── refine_capsule.lean            # Rust refinement proof
+│   ├── ltl_capsule.lean               # Core LTL semantics & 6 security theorems (incl. LSV)
+│   ├── refine_capsule.lean            # Rust refinement proof (lsv/digest aware)
 │   ├── AbstractAdvance.lean           # Abstract state transition model
 │   ├── AuthMonotone.lean              # Monotonicity helper lemmas
+│   ├── AuthVarInstance.lean           # AuthVar instantiation
+│   ├── SecureBootInstance.lean        # Secure Boot instantiation
 │   ├── CapsuleInstance.lean           # Model instantiation
 │   └── Composition.lean               # System composition proofs
 ├── tla+/                              # TLA+ specifications & TLC configs

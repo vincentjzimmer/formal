@@ -21,6 +21,8 @@
   Builds on AuthMonotone.lean + SecureBootInstance.lean. Mathlib-free, Lean 4.16.
 -/
 
+import AuthMonotone
+import AuthVarInstance
 import SecureBootInstance
 
 namespace UefiSecureBoot

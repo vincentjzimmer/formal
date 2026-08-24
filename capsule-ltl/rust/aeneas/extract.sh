@@ -32,7 +32,7 @@ fi
 
 echo "== Charon: Rust -> LLBC =="
 # `charon` drives cargo; emits capsule.llbc
-$CHARON cargo -- --lib
+$CHARON cargo --preset=aeneas -- --lib
 
 echo "== Aeneas: LLBC -> Lean =="
 # -backend lean : emit a Lean model; -dest : output directory

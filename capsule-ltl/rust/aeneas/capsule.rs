@@ -33,20 +33,38 @@ pub enum Phase {
 pub struct St {
     pub phase: Phase,
     pub fw_version: u64,
+    pub lsv: u64,
     pub capsule_present: bool,
     pub capsule_version: u64,
+    pub image_digest: u64,
     pub capsule_sig_valid: bool,
     pub reset_occurred: bool,
 }
 
+// Abstract certificate/signature verifier oracle. In the Lean model, `certOK`
+// is `opaque` — defined as always-true but hidden from proofs, so theorems hold
+// for ANY implementation. Here we match that: any nonzero digest is treated as
+// valid (0 = "no image staged"), which is the weakest concrete approximation of
+// the oracle that still rejects the trivially-absent case.
+// Replace with a real PKCS#7 verifier for production use.
+pub fn cert_ok(digest: u64) -> bool {
+    digest != 0  // stub: aligns with Lean `opaque certOK := fun _ => true`
+}
+
 // The decision the firmware makes at authentication time. This is the function
 // Aeneas will extract; the proof obligation is that its `Applied` outcome
-// implies the guard, and that it never lowers fw_version.
+// implies the guard `capsule_sig_valid && lsv <= capsule_version`, while the
+// global anti-rollback story is carried by the monotone stored floor `lsv`.
 pub fn authenticate(s: St) -> St {
     if s.phase == Phase::Authenticating {
-        if s.capsule_sig_valid && s.fw_version < s.capsule_version {
-            // apply: bump the running version (the only version-changing path)
-            St { phase: Phase::Applied, fw_version: s.capsule_version, ..s }
+        if s.capsule_sig_valid && s.lsv <= s.capsule_version {
+            // apply: bump the running version and the persisted rollback floor
+            St {
+                phase: Phase::Applied,
+                fw_version: s.capsule_version,
+                lsv: s.capsule_version,
+                ..s
+            }
         } else {
             // reject: anti-rollback or bad signature
             St { phase: Phase::Rejected, capsule_present: false, ..s }
@@ -71,15 +89,21 @@ pub fn reset(s: St) -> St {
 
 pub fn begin_auth(s: St) -> St {
     if s.phase == Phase::PostReset {
-        St { phase: Phase::Authenticating, ..s }
+        St {
+            phase: Phase::Authenticating,
+            // Model the auth-time certificate check as a digest-derived oracle.
+            capsule_sig_valid: cert_ok(s.image_digest),
+            ..s
+        }
     } else {
         s
     }
 }
 
 // A single deterministic good-path advance: one function whose iteration is the
-// run. Determinism is the key difference from the TLA+ model and is what makes
-// the bounded liveness witness expressible as plain recursion in the backend.
+// run. A staged state is "good" when `capsule_sig_valid && lsv <=
+// capsule_version` after `begin_auth`, and determinism is what makes the
+// bounded liveness witness expressible as plain recursion in the backend.
 pub fn advance(s: St) -> St {
     match s.phase {
         Phase::CapsuleStaged => reset(s),

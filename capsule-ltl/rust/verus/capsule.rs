@@ -4,9 +4,11 @@
 // This verifies the SAFETY properties of the foundational proof on *executable
 // code* rather than an abstract model:
 //   S  (authenticity)      : applied  => signature was valid
-//   R1 (anti-rollback step): one step never lowers the running version
-//   R2 (anti-rollback glob.): no run ever lowers it (transitive closure)
-//   G  (apply-guard)        : entering Applied requires sig && fw < cap
+//   R1 (anti-rollback step): one step never lowers the stored LSV floor
+//   R2 (anti-rollback glob.): no run ever lowers that floor
+//   R3 (lsv monotone)       : per-step LSV monotonicity on the EDK II floor
+//   F  (floor invariant)    : lsv <= fw_version
+//   G  (apply-guard)        : entering Applied requires sig && lsv <= cap
 //   O  (reset-first)        : Applied => a reset has occurred
 //
 // LIVENESS (L) is intentionally NOT here: Verus (like Aeneas) is a
@@ -37,15 +39,20 @@ pub enum Phase {
 pub struct St {
     pub phase: Phase,
     pub fw_version: nat,        // running firmware version (spec-mode nat: unbounded)
+    pub lsv: nat,               // lowest-supported-version floor (NV RAM)
     pub capsule_present: bool,
     pub capsule_version: nat,   // adversary-chosen
-    pub capsule_sig_valid: bool, // adversary-chosen signature verdict
+    pub image_digest: nat,      // abstract digest of the staged image
+    pub capsule_sig_valid: bool, // auth-time verifier verdict
     pub reset_occurred: bool,
 }
+
+pub uninterp spec fn cert_ok(digest: nat) -> bool;
 
 // ---- Init: mirrors Lean `Init` --------------------------------------------
 pub open spec fn init(s: St) -> bool {
     &&& s.phase == Phase::Idle
+    &&& s.lsv <= s.fw_version
     &&& s.capsule_present == false
     &&& s.reset_occurred == false
 }
@@ -56,60 +63,85 @@ pub open spec fn init(s: St) -> bool {
 pub open spec fn step(s: St, s2: St) -> bool {
     // stutterIdle
     ||| (s.phase == Phase::Idle && s2 == s)
-    // stage: adversary picks any version v and verdict b
+    // stage: adversary picks any version v and digest d
     ||| (s.phase == Phase::Idle
          && s2.phase == Phase::CapsuleStaged
          && s2.capsule_present == true
          && s2.reset_occurred == false
-         && s2.fw_version == s.fw_version)
+         && s2.fw_version == s.fw_version
+         && s2.lsv == s.lsv
+         && s2.capsule_sig_valid == s.capsule_sig_valid)
     // reset
     ||| (s.phase == Phase::CapsuleStaged
          && s2.phase == Phase::PostReset
          && s2.reset_occurred == true
          && s2.fw_version == s.fw_version
+         && s2.lsv == s.lsv
+         && s2.capsule_present == s.capsule_present
          && s2.capsule_version == s.capsule_version
+         && s2.image_digest == s.image_digest
          && s2.capsule_sig_valid == s.capsule_sig_valid)
     // beginAuth
     ||| (s.phase == Phase::PostReset
          && s2.phase == Phase::Authenticating
          && s2.reset_occurred == s.reset_occurred
          && s2.fw_version == s.fw_version
+         && s2.lsv == s.lsv
+         && s2.capsule_present == s.capsule_present
          && s2.capsule_version == s.capsule_version
-         && s2.capsule_sig_valid == s.capsule_sig_valid)
-    // apply: authentic AND strictly newer
+         && s2.image_digest == s.image_digest
+         && s2.capsule_sig_valid == cert_ok(s.image_digest))
+    // apply: authentic AND at or above LSV floor
     ||| (s.phase == Phase::Authenticating
          && s.capsule_sig_valid == true
-         && s.fw_version < s.capsule_version
+         && s.lsv <= s.capsule_version
          && s2.phase == Phase::Applied
          && s2.fw_version == s.capsule_version
+         && s2.lsv == s.capsule_version
+         && s2.capsule_version == s.capsule_version
+         && s2.image_digest == s.image_digest
+         && s2.capsule_present == s.capsule_present
          && s2.reset_occurred == s.reset_occurred
          && s2.capsule_sig_valid == s.capsule_sig_valid)
-    // reject: not authentic OR not newer
+    // reject: not authentic OR below LSV floor
     ||| (s.phase == Phase::Authenticating
-         && (s.capsule_sig_valid == false || s.capsule_version <= s.fw_version)
+         && (s.capsule_sig_valid == false || s.capsule_version < s.lsv)
          && s2.phase == Phase::Rejected
-         && s2.fw_version == s.fw_version)
+         && s2.fw_version == s.fw_version
+         && s2.capsule_present == s.capsule_present
+         && s2.capsule_version == s.capsule_version
+         && s2.image_digest == s.image_digest
+         && s2.reset_occurred == s.reset_occurred
+         && s2.capsule_sig_valid == s.capsule_sig_valid
+         && s2.lsv == s.lsv)
     // finish
     ||| ((s.phase == Phase::Applied || s.phase == Phase::Rejected)
          && s2.phase == Phase::Idle
-         && s2.fw_version == s.fw_version)
+         && s2.fw_version == s.fw_version
+         && s2.lsv == s.lsv
+         && s2.capsule_present == s.capsule_present
+         && s2.capsule_version == s.capsule_version
+         && s2.image_digest == s.image_digest
+         && s2.capsule_sig_valid == s.capsule_sig_valid
+         && s2.reset_occurred == s.reset_occurred)
 }
 
 // ===========================================================================
-// R1 — per-step anti-rollback. The only version-changing branch is `apply`,
-// whose guard forces fw < cap, so fw never decreases across a step.
+// R1 — per-step anti-rollback on the persisted LSV floor. Non-apply branches
+// preserve lsv; apply raises it to capsule_version under lsv <= capsule_version.
 // ===========================================================================
 pub proof fn anti_rollback_step(s: St, s2: St)
     requires step(s, s2),
-    ensures s.fw_version <= s2.fw_version,
+    ensures s.lsv <= s2.lsv,
 {
-    // Each disjunct either preserves fw_version or (apply) raises it under
-    // the guard fw < cap. Verus discharges the case split via Z3.
+    // Each disjunct either preserves lsv or (apply) raises it under the guard
+    // lsv <= capsule_version. Verus discharges the case split via Z3.
 }
 
 // ===========================================================================
 // G — apply-guard. Entering Applied from a non-Applied state requires a valid
-// signature and a strictly newer version. Mirrors Lean `apply_guard`.
+// signature and a capsule at or above the stored floor. Mirrors Lean
+// `apply_guard`.
 // ===========================================================================
 pub proof fn apply_guard(s: St, s2: St)
     requires
@@ -118,7 +150,7 @@ pub proof fn apply_guard(s: St, s2: St)
         s.phase != Phase::Applied,
     ensures
         s.capsule_sig_valid == true,
-        s.fw_version < s.capsule_version,
+        s.lsv <= s.capsule_version,
 {
     // Only the `apply` disjunct yields phase == Applied from a non-Applied
     // predecessor; its guard is exactly the postcondition.
@@ -137,8 +169,12 @@ pub open spec fn inv_reset(s: St) -> bool {
      || s.phase == Phase::Applied) ==> s.reset_occurred == true
 }
 
+pub open spec fn inv_floor(s: St) -> bool {
+    s.lsv <= s.fw_version
+}
+
 pub open spec fn inv(s: St) -> bool {
-    inv_sig(s) && inv_reset(s)
+    inv_sig(s) && inv_reset(s) && inv_floor(s)
 }
 
 // Inv holds at init...
@@ -159,9 +195,9 @@ pub proof fn inv_step(s: St, s2: St)
 
 // ===========================================================================
 // R2 — global anti-rollback over a run. A run is a sequence of states with
-// init at 0 and every adjacent pair related by `step`. fw is monotone, so for
-// any i <= j, fw[i] <= fw[j]. Proof by induction on the gap, composing R1 —
-// the executable analogue of Lean `antirollback_global`.
+// init at 0 and every adjacent pair related by `step`. lsv is monotone, so for
+// any i <= j, lsv[i] <= lsv[j]. Proof by induction on the gap, composing R1 —
+// the executable analogue of Lean `antirollback_lsv_global`.
 // ===========================================================================
 pub open spec fn is_run(run: Seq<St>) -> bool {
     &&& run.len() > 0
@@ -174,7 +210,7 @@ pub proof fn anti_rollback_global(run: Seq<St>, i: int, j: int)
         is_run(run),
         0 <= i <= j < run.len(),
     ensures
-        run[i].fw_version <= run[j].fw_version,
+        run[i].lsv <= run[j].lsv,
     decreases j - i,
 {
     if i < j {
@@ -183,6 +219,24 @@ pub proof fn anti_rollback_global(run: Seq<St>, i: int, j: int)
         assert(step(run[j - 1], run[(j - 1) + 1]));
         anti_rollback_step(run[j - 1], run[j]);
     }
+}
+
+pub proof fn lsv_monotone(s: St, s2: St)
+    requires step(s, s2),
+    ensures s.lsv <= s2.lsv,
+{
+    anti_rollback_step(s, s2);
+}
+
+pub proof fn antirollback_lsv(run: Seq<St>, i: int, j: int)
+    requires
+        is_run(run),
+        0 <= i <= j < run.len(),
+    ensures
+        run[i].lsv <= run[j].lsv,
+    decreases j - i,
+{
+    anti_rollback_global(run, i, j);
 }
 
 // And S/O hold at every position of every run, by induction using inv_step.
@@ -218,8 +272,8 @@ pub proof fn inv_run(run: Seq<St>, i: int)
 // ===========================================================================
 pub open spec fn good(s: St) -> bool {
     &&& s.phase == Phase::CapsuleStaged
-    &&& s.capsule_sig_valid == true
-    &&& s.fw_version < s.capsule_version
+    &&& cert_ok(s.image_digest) == true
+    &&& s.lsv <= s.capsule_version
 }
 
 // Deterministic good-path step: relates s to its unique forced successor.
@@ -241,17 +295,21 @@ pub proof fn responsiveness_bounded(s0: St, s1: St, s2: St, s3: St)
         // fields preserved across reset/beginAuth so apply's guard still holds:
         step(s0, s1), s1.phase == Phase::PostReset,
         s1.fw_version == s0.fw_version,
+        s1.lsv == s0.lsv,
         s1.capsule_version == s0.capsule_version,
+        s1.image_digest == s0.image_digest,
         s1.capsule_sig_valid == s0.capsule_sig_valid,
         step(s1, s2), s2.phase == Phase::Authenticating,
         s2.fw_version == s1.fw_version,
+        s2.lsv == s1.lsv,
         s2.capsule_version == s1.capsule_version,
-        s2.capsule_sig_valid == s1.capsule_sig_valid,
+        s2.image_digest == s1.image_digest,
+        s2.capsule_sig_valid == cert_ok(s1.image_digest),
         step(s2, s3),
     ensures
         s3.phase == Phase::Applied,
 {
-    // s2 is Authenticating with sig valid and fw < cap (preserved from s0),
+    // s2 is Authenticating with sig valid and lsv <= cap (preserved from s0),
     // so the only enabled disjunct of step(s2, s3) is `apply`, giving Applied.
     // Z3 closes this from the guard contradiction with `reject`.
 }

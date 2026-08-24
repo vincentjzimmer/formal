@@ -85,13 +85,15 @@ def Phase.Insts.CoreCmpEq : core.cmp.Eq Phase := {
 }
 
 /-- [capsule::St]
-    Source: 'capsule.rs', lines 33:0-40:1
+    Source: 'capsule.rs', lines 33:0-42:1
     Visibility: public -/
 structure St where
   phase : Phase
   fw_version : Std.U64
+  lsv : Std.U64
   capsule_present : Bool
   capsule_version : Std.U64
+  image_digest : Std.U64
   capsule_sig_valid : Bool
   reset_occurred : Bool
 
@@ -115,8 +117,14 @@ def St.Insts.CoreMarkerCopy : core.marker.Copy St := {
   cloneInst := St.Insts.CoreCloneClone
 }
 
+/-- [capsule::cert_ok]:
+    Source: 'capsule.rs', lines 50:0-52:1
+    Visibility: public -/
+def cert_ok (digest : Std.U64) : Result Bool := do
+  ok (digest != 0#u64)
+
 /-- [capsule::authenticate]:
-    Source: 'capsule.rs', lines 45:0-57:1
+    Source: 'capsule.rs', lines 58:0-75:1
     Visibility: public -/
 def authenticate (s : St) : Result St := do
   let b ← Phase.Insts.CoreCmpPartialEqPhase.eq s.phase Phase.Authenticating
@@ -124,15 +132,22 @@ def authenticate (s : St) : Result St := do
   then
     if s.capsule_sig_valid
     then
-      if s.fw_version < s.capsule_version
+      if s.lsv <= s.capsule_version
       then
-        ok { s with phase := Phase.Applied, fw_version := s.capsule_version }
+        ok
+          {
+            s
+              with
+              phase := Phase.Applied,
+              fw_version := s.capsule_version,
+              lsv := s.capsule_version
+          }
       else ok { s with phase := Phase.Rejected, capsule_present := false }
     else ok { s with phase := Phase.Rejected, capsule_present := false }
   else ok s
 
 /-- [capsule::reset]:
-    Source: 'capsule.rs', lines 64:0-70:1
+    Source: 'capsule.rs', lines 82:0-88:1
     Visibility: public -/
 def reset (s : St) : Result St := do
   let b ← Phase.Insts.CoreCmpPartialEqPhase.eq s.phase Phase.CapsuleStaged
@@ -141,16 +156,18 @@ def reset (s : St) : Result St := do
   else ok s
 
 /-- [capsule::begin_auth]:
-    Source: 'capsule.rs', lines 72:0-78:1
+    Source: 'capsule.rs', lines 90:0-101:1
     Visibility: public -/
 def begin_auth (s : St) : Result St := do
   let b ← Phase.Insts.CoreCmpPartialEqPhase.eq s.phase Phase.PostReset
   if b
-  then ok { s with phase := Phase.Authenticating }
+  then
+    let b1 ← cert_ok s.image_digest
+    ok { s with phase := Phase.Authenticating, capsule_sig_valid := b1 }
   else ok s
 
 /-- [capsule::advance]:
-    Source: 'capsule.rs', lines 83:0-90:1
+    Source: 'capsule.rs', lines 107:0-114:1
     Visibility: public -/
 def advance (s : St) : Result St := do
   match s.phase with

@@ -1,9 +1,9 @@
 ---------------------------- MODULE CapsuleUpdate ----------------------------
 (***************************************************************************)
 (* A TLA+ rendering of the UEFI capsule-update LTS from the Lean           *)
-(* development (ltl_capsule.lean).  Phase 1 is a deliberate ONE-TO-ONE     *)
+(* development (ltl_capsule.lean). Phase 1 is a deliberate ONE-TO-ONE      *)
 (* mirror of the Lean `St` record and `Step` relation, so the two models   *)
-(* can be eyeballed against each other.  Phase 2 (CRASH) adds the          *)
+(* can be eyeballed against each other. Phase 2 (CRASH) adds the           *)
 (* power-fail / interrupted-SetImage behaviour the Lean model abstracts    *)
 (* away -- this is where TLC is expected to break the fairness-free        *)
 (* liveness property (L) and force explicit recovery assumptions.          *)
@@ -25,39 +25,48 @@ Versions == 0 .. MaxVersion
 \* ---- State: mirrors Lean `structure St` ----------------------------------
 \* phase           : Phase
 \* fwVersion       : Nat       (running firmware version)
+\* lsv             : Nat       (lowest supported version floor)
 \* capsulePresent  : Bool
 \* capsuleVersion  : Nat       (adversary-chosen, like Lean's `stage` input)
-\* capsuleSigValid : Bool      (adversary-chosen signature verdict)
+\* imageDigest     : Nat       (authenticated input staged with the capsule)
+\* capsuleSigValid : Bool      (computed by BeginAuth from imageDigest)
 \* resetOccurred   : Bool
 VARIABLES
-    phase, fwVersion, capsulePresent, capsuleVersion, capsuleSigValid,
-    resetOccurred
+    phase, fwVersion, lsv, capsulePresent, capsuleVersion, imageDigest,
+    capsuleSigValid, resetOccurred
 
-vars == << phase, fwVersion, capsulePresent, capsuleVersion,
-           capsuleSigValid, resetOccurred >>
+vars == << phase, fwVersion, lsv, capsulePresent, capsuleVersion,
+           imageDigest, capsuleSigValid, resetOccurred >>
+
+CertOK(d) == d /= 0
 
 TypeOK ==
     /\ phase           \in Phases
     /\ fwVersion       \in Versions
+    /\ lsv             \in Versions
     /\ capsulePresent  \in BOOLEAN
     /\ capsuleVersion  \in Versions
+    /\ imageDigest     \in Versions
     /\ capsuleSigValid \in BOOLEAN
     /\ resetOccurred   \in BOOLEAN
 
 \* ---- Init: mirrors Lean `Init` --------------------------------------------
-\* Lean fixes only phase/capsulePresent/resetOccurred; fwVersion and the
-\* (unused-at-init) capsule fields are otherwise unconstrained.  We let
-\* fwVersion start anywhere in range so monotonicity is proved generally.
+\* Lean fixes only phase/capsulePresent/resetOccurred plus the floor relation;
+\* fwVersion, lsv, and the otherwise-unused capsule fields are unconstrained
+\* beyond typing.
 Init ==
     /\ phase           = "Idle"
     /\ capsulePresent  = FALSE
     /\ resetOccurred   = FALSE
     /\ fwVersion       \in Versions
+    /\ lsv             \in Versions
     /\ capsuleVersion  \in Versions
+    /\ imageDigest     \in Versions
     /\ capsuleSigValid \in BOOLEAN
+    /\ lsv <= fwVersion
 
 \* ===========================================================================
-\* Phase 1: the eight Lean `Step` rules, one TLA+ action each.
+\* Phase 1: the Lean `Step` rules, one TLA+ action each.
 \* ===========================================================================
 
 \* stutterIdle (s) : phase = Idle -> Step s s
@@ -65,50 +74,55 @@ StutterIdle ==
     /\ phase = "Idle"
     /\ UNCHANGED vars
 
-\* stage (s) v sig : phase = Idle -> staged with adversary-chosen v, sig
-\* The \E here IS the Lean threat model: environment picks any version and
-\* any signature verdict (forged / downgraded capsules included).
+\* stage (s) v digest : phase = Idle -> staged with adversary-chosen v, digest
+\* Signature validity is no longer chosen here; BeginAuth derives it later.
 Stage ==
     /\ phase = "Idle"
-    /\ \E v \in Versions, sig \in BOOLEAN :
-         /\ capsuleVersion'  = v
-         /\ capsuleSigValid' = sig
+    /\ \E v \in Versions, d \in Versions :
+         /\ capsuleVersion' = v
+         /\ imageDigest'    = d
     /\ phase'          = "CapsuleStaged"
     /\ capsulePresent' = TRUE
     /\ resetOccurred'  = FALSE
-    /\ UNCHANGED fwVersion
+    /\ UNCHANGED << fwVersion, lsv, capsuleSigValid >>
 
 \* reset (s) : phase = CapsuleStaged -> PostReset, resetOccurred := true
 Reset ==
     /\ phase = "CapsuleStaged"
     /\ phase'         = "PostReset"
     /\ resetOccurred' = TRUE
-    /\ UNCHANGED << fwVersion, capsulePresent, capsuleVersion, capsuleSigValid >>
+    /\ UNCHANGED << fwVersion, lsv, capsulePresent, capsuleVersion,
+                    imageDigest, capsuleSigValid >>
 
-\* beginAuth (s) : phase = PostReset -> Authenticating
+\* beginAuth (s) : phase = PostReset -> Authenticating,
+\*                 capsuleSigValid := CertOK(imageDigest)
 BeginAuth ==
     /\ phase = "PostReset"
-    /\ phase' = "Authenticating"
-    /\ UNCHANGED << fwVersion, capsulePresent, capsuleVersion,
-                    capsuleSigValid, resetOccurred >>
+    /\ phase'            = "Authenticating"
+    /\ capsuleSigValid'  = CertOK(imageDigest)
+    /\ UNCHANGED << fwVersion, lsv, capsulePresent, capsuleVersion,
+                    imageDigest, resetOccurred >>
 
-\* apply (s) : authentic + strictly-newer -> Applied, fwVersion := capsuleVersion
+\* apply (s) : authentic + at-or-above-floor -> Applied,
+\*             fwVersion := capsuleVersion, lsv := capsuleVersion
 Apply ==
     /\ phase = "Authenticating"
     /\ capsuleSigValid = TRUE
-    /\ fwVersion < capsuleVersion
+    /\ lsv <= capsuleVersion
     /\ phase'     = "Applied"
     /\ fwVersion' = capsuleVersion
-    /\ UNCHANGED << capsulePresent, capsuleVersion, capsuleSigValid,
-                    resetOccurred >>
+    /\ lsv'       = capsuleVersion
+    /\ UNCHANGED << capsulePresent, capsuleVersion, imageDigest,
+                    capsuleSigValid, resetOccurred >>
 
-\* reject (s) : NOT(sig) \/ capsuleVersion <= fwVersion -> Rejected
+\* reject (s) : NOT(sig) \/ capsuleVersion < lsv -> Rejected
 Reject ==
     /\ phase = "Authenticating"
-    /\ (capsuleSigValid = FALSE \/ capsuleVersion <= fwVersion)
+    /\ (capsuleSigValid = FALSE \/ capsuleVersion < lsv)
     /\ phase'          = "Rejected"
     /\ capsulePresent' = FALSE
-    /\ UNCHANGED << fwVersion, capsuleVersion, capsuleSigValid, resetOccurred >>
+    /\ UNCHANGED << fwVersion, lsv, capsuleVersion, imageDigest,
+                    capsuleSigValid, resetOccurred >>
 
 \* finishApplied / finishRejected : phase \in {Applied,Rejected} -> Idle
 Finish ==
@@ -116,27 +130,21 @@ Finish ==
     /\ phase'          = "Idle"
     /\ capsulePresent' = FALSE
     /\ resetOccurred'  = FALSE
-    /\ UNCHANGED << fwVersion, capsuleVersion, capsuleSigValid >>
+    /\ UNCHANGED << fwVersion, lsv, capsuleVersion, imageDigest,
+                    capsuleSigValid >>
 
 \* ===========================================================================
-\* Phase 2: power-fail.  THIS HAS NO COUNTERPART IN THE LEAN MODEL.
+\* Phase 2: power-fail. THIS HAS NO COUNTERPART IN THE LEAN MODEL.
 \* A reset can fire from any non-Idle phase, dropping back to PostReset-style
-\* recovery.  The subtle, security-relevant choice is what happens to
-\* fwVersion if the crash interrupts `Apply` mid-write: model it as
-\* nondeterministically the OLD or the NEW version (a partial flash write).
-\* This is the action expected to falsify fairness-free liveness (L) and to
-\* stress the monotonicity invariant.
+\* recovery. The subtle choice is what happens to fwVersion if the crash
+\* interrupts `Apply` mid-write: model it as nondeterministically the OLD or
+\* the NEW version. The LSV floor and staged digest survive the crash.
 \* ===========================================================================
-\* A partial SetImage can only land a version that was legitimately being
-\* written -- i.e. the new version, and only when an apply was in progress
-\* (fwVersion < capsuleVersion).  Otherwise the crash leaves fwVersion
-\* untouched.  This keeps the crash from spuriously rolling the version back,
-\* so any R1 violation TLC reports is a *real* hazard, not a modelling artefact.
 \* LISTING:crash:begin
 PartialWrite ==
     IF /\ phase = "Authenticating"
        /\ capsuleSigValid = TRUE
-       /\ fwVersion < capsuleVersion
+       /\ lsv <= capsuleVersion
     THEN { fwVersion, capsuleVersion }   \* mid-apply: old or new
     ELSE { fwVersion }                   \* no write in flight: unchanged
 
@@ -146,20 +154,21 @@ Crash ==
     /\ fwVersion' \in PartialWrite
     /\ phase'         = "PostReset"
     /\ resetOccurred' = TRUE
-    /\ UNCHANGED << capsulePresent, capsuleVersion, capsuleSigValid >>
+    /\ UNCHANGED << lsv, capsulePresent, capsuleVersion, imageDigest,
+                    capsuleSigValid >>
 \* LISTING:crash:end
 
 \* Opt-in, more-adversarial variant: a crash can corrupt fwVersion to ANY
-\* value (e.g. a torn write of the version metadata itself).  Swapping this
-\* in for Crash in Next breaks AntiRollbackStep -- the second paper's finding
-\* that crash-consistency of the version record is its own proof obligation.
+\* value (e.g. a torn write of the version metadata itself). The LSV floor is
+\* still preserved; what breaks is the relation between fwVersion and the floor.
 CrashAdversarial ==
     /\ CRASH
     /\ phase \notin { "Idle" }
     /\ fwVersion' \in Versions
     /\ phase'         = "PostReset"
     /\ resetOccurred' = TRUE
-    /\ UNCHANGED << capsulePresent, capsuleVersion, capsuleSigValid >>
+    /\ UNCHANGED << lsv, capsulePresent, capsuleVersion, imageDigest,
+                    capsuleSigValid >>
 
 Next ==
     \/ StutterIdle \/ Stage \/ Reset \/ BeginAuth
@@ -167,25 +176,27 @@ Next ==
     \/ Crash
 
 \* Weak fairness on the "good path" actions only -- mirrors the Lean claim
-\* that progress is forced.  Under CRASH this fairness is NOT enough, which
+\* that progress is forced. Under CRASH this fairness is NOT enough, which
 \* is exactly the finding the second paper is after.
 Spec == Init /\ [][Next]_vars /\ WF_vars(Reset) /\ WF_vars(BeginAuth)
                               /\ WF_vars(Apply)
 
 \* ===========================================================================
-\* Properties: the five Lean theorems, restated as TLA+ temporal formulas.
+\* Properties: the Lean theorems, restated as TLA+ temporal formulas.
 \* ===========================================================================
 
 \* S  -- safety_authentic : G (Applied -> sig valid)
 \* State-predicate form (used with INVARIANT); [] is supplied by TLC.
 SafetyAuthentic == (phase = "Applied" => capsuleSigValid = TRUE)
 
-\* R1 -- antirollback_step : G (fwVersion <= fwVersion')
-\* (an action property; under CRASH with partial-write this can FAIL)
-AntiRollbackStep == [][ fwVersion' >= fwVersion ]_vars
+\* R1 -- antirollback_lsv : G (lsv <= lsv')
+AntiRollbackLSV == [][ lsv <= lsv' ]_vars
 
-\* R2 -- antirollback_global is the inductive consequence of R1; TLC checks
-\* the step form and we trust transitivity (or use Apalache for the closure).
+\* Legacy alias kept for callers that still mention the old property name.
+AntiRollbackStep == AntiRollbackLSV
+
+\* FLOOR invariant: the LSV floor never exceeds the running firmware version.
+InvFloor == lsv <= fwVersion
 
 \* O  -- reset_first : G (Applied -> resetOccurred)
 \* State-predicate form (used with INVARIANT).
@@ -195,14 +206,14 @@ ResetFirst == (phase = "Applied" => resetOccurred = TRUE)
 \* Expressed as an action formula over the primed/unprimed pair.
 ApplyGuarded ==
     [][ (phase # "Applied" /\ phase' = "Applied")
-          => (capsuleSigValid = TRUE /\ fwVersion < capsuleVersion) ]_vars
+          => (capsuleSigValid = TRUE /\ lsv <= capsuleVersion) ]_vars
 
 \* L  -- responsiveness (liveness, fairness-free in Lean).
 \* Once a good capsule is staged, Applied is eventually reached.
 GoodStaged ==
     /\ phase = "CapsuleStaged"
-    /\ capsuleSigValid = TRUE
-    /\ fwVersion < capsuleVersion
+    /\ CertOK(imageDigest)
+    /\ lsv <= capsuleVersion
 
 Responsiveness == [] (GoodStaged => <> (phase = "Applied"))
 
