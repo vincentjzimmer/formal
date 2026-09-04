@@ -1,7 +1,7 @@
 /-
   Bridge.lean — the refinement lemma between the Aeneas-EXTRACTED capsule code
   (Capsule.lean, monadic `Result`, `U64` versions) and the ABSTRACT model
-  (Abstract.lean = ltl_capsule.lean + refine_capsule.lean, pure, `Nat` versions).
+  (`ltl_capsule.lean` + `refine_capsule.lean`, pure, `Nat` versions).
 
   This closes the single previously-unproved link in the end-to-end chain.
 
@@ -15,11 +15,13 @@
   (`responsiveness_det`, `safety_authentic_det`), the temporal guarantees then
   hold of the EXTRACTED Rust-derived function, not merely a hand-copy of it.
 
-  No `sorry`. `advance` performs no arithmetic (it only copies capVer into
-  fwVer), so no u64-overflow side-condition is needed for the refinement.
+  The bridge assumes that the concrete verifier implements the abstract
+  `certOK` oracle. No `sorry`. `advance` performs no arithmetic, so no
+  u64-overflow side-condition is needed for the refinement.
 -/
 import Capsule
-import Abstract
+import ltl_capsule
+import refine_capsule
 
 open Aeneas Aeneas.Std Result ControlFlow Error
 
@@ -38,10 +40,17 @@ def αPhase : capsule.Phase → UefiCapsuleLTL.Phase
 def α (s : capsule.St) : UefiCapsuleLTL.St :=
   { phase          := αPhase s.phase
     fwVersion      := s.fw_version.val
+    lsv            := s.lsv.val
     capsulePresent := s.capsule_present
     capsuleVersion := s.capsule_version.val
+    imageDigest    := s.image_digest.val
     capsuleSigValid := s.capsule_sig_valid
     resetOccurred  := s.reset_occurred }
+
+/-- The trusted concrete verifier implements the abstract authentication
+    oracle on every digest. This is the cryptographic refinement boundary. -/
+def VerifierRefines : Prop :=
+  ∀ d, capsule.cert_ok d = ok (UefiCapsuleLTL.certOK d.val)
 
 /-- A phase that is not a terminal sink. The Rust `advance` halts at the
     `Applied`/`Rejected` sinks (returns its input unchanged), whereas the
@@ -60,7 +69,8 @@ def NonSink (s : capsule.St) : Prop :=
     code provably refines the proved transition system along the good path.
     `advance` does no arithmetic (it only copies capVer into fwVer), so no
     u64-overflow side-condition is needed. -/
-theorem advance_refines (s : capsule.St) (hns : NonSink s) :
+theorem advance_refines (hverifier : VerifierRefines)
+    (s : capsule.St) (hns : NonSink s) :
     ∃ s', capsule.advance s = ok s' ∧ α s' = UefiCapsuleLTL.advance (α s) := by
   obtain ⟨hA, hR⟩ := hns
   unfold capsule.advance capsule.reset capsule.begin_auth capsule.authenticate
@@ -71,18 +81,25 @@ theorem advance_refines (s : capsule.St) (hns : NonSink s) :
       exact ⟨{ s with phase := capsule.Phase.PostReset, reset_occurred := true },
              by simp, by simp [h, α, αPhase, UefiCapsuleLTL.advance]⟩
   | PostReset      =>
-      exact ⟨{ s with phase := capsule.Phase.Authenticating },
-             by simp, by simp [h, α, αPhase, UefiCapsuleLTL.advance]⟩
+      have hv := hverifier s.image_digest
+      exact ⟨{ s with phase := capsule.Phase.Authenticating,
+                      capsule_sig_valid := UefiCapsuleLTL.certOK s.image_digest.val },
+             by simpa [capsule.cert_ok] using hv,
+             by simp [h, α, αPhase, UefiCapsuleLTL.advance]⟩
   | Authenticating =>
       by_cases hsig : s.capsule_sig_valid = true
-      · by_cases hlt : s.fw_version < s.capsule_version
-        · have hv : s.fw_version.val < s.capsule_version.val := (UScalar.lt_equiv _ _).mp hlt
-          exact ⟨{ s with phase := capsule.Phase.Applied, fw_version := s.capsule_version },
-                 by simp [hsig, hlt], by simp [α, αPhase, UefiCapsuleLTL.advance, h, hsig, hv]⟩
-        · have hv : ¬ (s.fw_version.val < s.capsule_version.val) :=
-            fun hc => hlt ((UScalar.lt_equiv _ _).mpr hc)
+      · by_cases hle : s.lsv <= s.capsule_version
+        · have hv : s.lsv.val ≤ s.capsule_version.val := (UScalar.le_equiv _ _).mp hle
+          exact ⟨{ s with phase := capsule.Phase.Applied,
+                          fw_version := s.capsule_version,
+                          lsv := s.capsule_version },
+                 by simp [hsig, hle],
+                 by simp [α, αPhase, UefiCapsuleLTL.advance, h, hsig, hv]⟩
+        · have hv : ¬ (s.lsv.val ≤ s.capsule_version.val) :=
+            fun hc => hle ((UScalar.le_equiv _ _).mpr hc)
           exact ⟨{ s with phase := capsule.Phase.Rejected, capsule_present := false },
-                 by simp [hsig, hlt], by simp [α, αPhase, UefiCapsuleLTL.advance, h, hsig, hv]⟩
+                 by simp [hsig, hle],
+                 by simp [α, αPhase, UefiCapsuleLTL.advance, h, hsig, hv]⟩
       · exact ⟨{ s with phase := capsule.Phase.Rejected, capsule_present := false },
                by simp [hsig], by simp [α, αPhase, UefiCapsuleLTL.advance, h, hsig]⟩
   | Applied        => exact absurd h hA

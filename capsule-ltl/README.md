@@ -1,6 +1,6 @@
 # Machine-Checked Linear Temporal Logic for the UEFI Capsule Update Process
 
-[![Lean 4](https://img.shields.io/badge/Lean-4.33.1-blue.svg)](https://leanprover.github.io/)
+[![Lean 4](https://img.shields.io/badge/Lean-4.30.0--rc2-blue.svg)](https://leanprover.github.io/)
 [![TLA+](https://img.shields.io/badge/TLA%2B-2.19-purple.svg)](https://lamport.azurewebsites.net/tla/tla.html)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -27,7 +27,10 @@ This repository provides the complete, open-source verification artifacts:
    - **Reset Ordering ($O$)**: Application requires a mandatory platform reset.
    - **Responsiveness ($L$)**: Good path forcing guarantees eventual application.
 2. **TLA+ & TLAPS Specifications**: Explicit-state cross-validation (TLC) probing model boundaries (power failures, torn metadata, multi-device dependencies) and unbounded safety re-proofs (TLAPS).
-3. **Executable Safe-Rust Reference Monitor**: Verified refinement via Charon/Aeneas mapping executable Rust `advance` code to the abstract Lean `Step` relation.
+3. **Executable Safe-Rust Decision-Logic Prototype**: A Charon/Aeneas extraction
+   and conditional refinement bridge mapping Rust `advance` to the abstract Lean
+   `Step` relation. The bridge assumes that the concrete verifier implements the
+   abstract `certOK` oracle; it does not verify EDK II, PKCS#7, or flash I/O.
 
 ---
 
@@ -75,7 +78,7 @@ This repository provides the complete, open-source verification artifacts:
 
 ```bash
 cd lean
-elan override set leanprover/lean4:v4.16.0
+elan override set leanprover/lean4:v4.30.0-rc2
 lake build
 ```
 

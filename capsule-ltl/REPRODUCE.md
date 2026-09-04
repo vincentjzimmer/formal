@@ -13,7 +13,7 @@ Estimated total time: **~30 minutes** (most of which is toolchain download).
 
 | Tool | Version | Install |
 |------|---------|---------|
-| [elan / Lean 4](https://leanprover.github.io/lean4/doc/setup.html) | ≥ 4.33.1 | `curl -sSf https://elan.lean-lang.org/elan-init.sh \| sh` |
+| [elan / Lean 4](https://leanprover.github.io/lean4/doc/setup.html) | 4.30.0-rc2 | `curl -sSf https://elan.lean-lang.org/elan-init.sh \| sh` |
 | [Java 11+](https://adoptium.net/) | ≥ 11 | `apt install default-jdk` / brew / etc. |
 | [tla2tools.jar](https://github.com/tlaplus/tlaplus/releases) | 2.19 | Download jar, place in `tla+/` |
 | [tlapm](https://tla.msr-inria.inria.fr/tlaps/) | ≥ 1.4.5 | `nix profile install nixpkgs#tlaps` |
@@ -154,9 +154,22 @@ bash extract.sh
 ```
 
 This produces `lean/Capsule.lean` — the pure-functional Lean model extracted
-from the safe Rust code. The hand-written refinement proof in
-`lean/refine_capsule.lean` then links this extracted model to the abstract
-`Step` relation in `ltl_capsule.lean`.
+from the safe Rust code. `rust/aeneas/lean/Bridge.lean` links that generated
+model to the abstract `Step` relation in `ltl_capsule.lean`, conditional on the
+explicit `VerifierRefines` assumption that the concrete verifier implements the
+abstract `certOK` oracle.
+
+Type-check the generated modules and all three refinement bridges with the
+Aeneas-compatible toolchain pinned in that directory:
+
+```bash
+cd lean
+lake build
+```
+
+The bridge package pins its Aeneas support-library revision; the complete
+artifact uses Lean 4.30.0-rc2 so generated and hand-written modules share one
+compatible kernel format.
 
 > **Note:** The repository ships a pre-generated `lean/Capsule.lean` snapshot
 > so that steps 1–3 above work without Charon/Aeneas installed.  Run `extract.sh`
