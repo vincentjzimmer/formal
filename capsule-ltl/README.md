@@ -114,7 +114,7 @@ rustc --crate-type lib capsule.rs
 
 ## 📜 Citation
 
-If you use this work, please cite:
+If you use this work https://sites.google.com/site/vincentzimmer/pre-prints, please cite:
 
 ```bibtex
 @misc{zimmer2026capsuleltl,
